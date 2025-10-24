@@ -1,14 +1,10 @@
+import SeatGrid from './components/SeatGrid'; // <-- Đã import (TV3)
 import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:5000', { autoConnect: true });
 
-// Màu sắc theo trạng thái ghế
-const STATUS_COLOR = {
-  available: '#22c55e', // xanh lá
-  reserved: '#ef4444',  // đỏ
-  held: '#f59e0b'       // cam
-};
+// XÓA STATUS_COLOR (đã chuyển sang SeatGrid.jsx)
 
 export default function App() {
   const [connected, setConnected] = useState(false);
@@ -104,44 +100,7 @@ export default function App() {
     }
   };
 
-  const renderSeat = (seat) => {
-    const isSelected = seat && selectedSeatIds.has(seat.id);
-    const bg = isSelected ? '#3b82f6' : STATUS_COLOR[seat?.status || 'available']; // ghế đang chọn = xanh dương
-    const label = seat ? `${String.fromCharCode(65 + seat.row)}${seat.col + 1}` : '';
-
-    return (
-      <button
-        key={seat ? seat.id : Math.random()}
-        onClick={() => seat && toggleSeat(seat)}
-        disabled={!seat || seat.status !== 'available'}
-        style={{
-          width: 36,
-          height: 36,
-          borderRadius: 10,
-          border: '1px solid rgba(255,255,255,0.08)',
-          background: seat ? bg : 'transparent',
-          color: '#0b1220',
-          cursor: seat && seat.status === 'available' ? 'pointer' : 'not-allowed',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 12,
-          userSelect: 'none',
-          transition: 'transform .12s ease, box-shadow .12s ease, background .12s ease',
-          boxShadow: isSelected ? '0 6px 14px rgba(59,130,246,0.35)' : '0 4px 10px rgba(0,0,0,0.25)'
-        }}
-        title={seat ? `${label} - ${seat.status}` : ''}
-        onMouseEnter={(e) => {
-          if (seat && seat.status === 'available') e.currentTarget.style.transform = 'translateY(-2px)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'none';
-        }}
-      >
-        {seat ? label : ''}
-      </button>
-    );
-  };
+  // XÓA HÀM renderSeat (đã chuyển sang SeatGrid.jsx)
 
   const selectedCount = selectedSeatIds.size;
 
@@ -165,12 +124,15 @@ export default function App() {
               </span>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Badge color="#22c55e" text="Trống" />
-            <Badge color="#f59e0b" text="Giữ chỗ" />
-            <Badge color="#ef4444" text="Đã đặt" />
-            <Badge color="#3b82f6" text="Đang chọn" />
-          </div>
+         
+<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+  <Badge color="#64748b" text="Thường" />
+  <Badge color="#8b5cf6" text="VIP" />
+  <Badge color="#374151" text="Đã đặt" />
+  <Badge color="#f59e0b" text="Giữ chỗ" />
+  <Badge color="#22c55e" text="Đang chọn" />
+</div>
+
         </header>
 
         <div style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: 18, boxShadow: '0 12px 30px rgba(0,0,0,0.35)' }}>
@@ -179,19 +141,13 @@ export default function App() {
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 6 }}>MÀN HÌNH</div>
           </div>
 
-          <div style={{ padding: '6px 8px 2px 8px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${gridSize.cols}, 40px)`, gap: 8, justifyContent: 'center' }}>
-              {seatMatrix.map((row, rIdx) => (
-                <div key={rIdx} style={{ display: 'contents' }}>
-                  {row.map((seat, cIdx) => (
-                    <div key={cIdx} style={{ marginRight: (cIdx === Math.floor(gridSize.cols / 2) - 1) ? 24 : 0 }}>
-                      {renderSeat(seat)}
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* GỌI COMPONENT CỦA BẠN (THÀNH VIÊN 3) TẠI ĐÂY */}
+          <SeatGrid
+            seatMatrix={seatMatrix}
+            gridSize={gridSize}
+            selectedSeatIds={selectedSeatIds}
+            onToggleSeat={toggleSeat}
+          />
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 16, gap: 12, flexWrap: 'wrap' }}>
             <div style={{ color: 'rgba(255,255,255,0.8)' }}>
@@ -276,5 +232,3 @@ function StatusPill({ connected }) {
     </span>
   );
 }
-
-
