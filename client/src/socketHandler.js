@@ -61,6 +61,26 @@ class SocketHandler {
     this.socket.on('seats:update', (payload) => {
       this.trigger('seats:update', payload);
     });
+
+    this.socket.on('online:users', (users) => {
+      this.trigger('online:users', users);
+    });
+
+    this.socket.on('user:limit:reached', (data) => {
+      this.trigger('user:limit:reached', data);
+    });
+
+    this.socket.on('login:success', (data) => {
+      this.trigger('login:success', data);
+    });
+
+    this.socket.on('login:error', (data) => {
+      this.trigger('login:error', data);
+    });
+
+    this.socket.on('logout:success', (data) => {
+      this.trigger('logout:success', data);
+    });
   }
 
   disconnect() {
@@ -118,6 +138,40 @@ class SocketHandler {
   reserveSeats(seatIds) {
     if (this.socket) {
       this.socket.emit('seats:reserve', { seatIds });
+    }
+  }
+
+  // Đăng nhập người dùng
+  login(username) {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Socket not connected'));
+        return;
+      }
+
+      const onSuccess = (data) => {
+        this.off('login:success', onSuccess);
+        this.off('login:error', onError);
+        resolve(data);
+      };
+
+      const onError = (data) => {
+        this.off('login:success', onSuccess);
+        this.off('login:error', onError);
+        reject(new Error(data.message || 'Login failed'));
+      };
+
+      this.on('login:success', onSuccess);
+      this.on('login:error', onError);
+
+      this.socket.emit('user:login', { username });
+    });
+  }
+
+  // Đăng xuất người dùng
+  logout() {
+    if (this.socket) {
+      this.socket.emit('user:logout');
     }
   }
 }

@@ -21,6 +21,10 @@ const COLS = 12;
 let seats = [];
 let seatIdCounter = 0;
 
+// Quản lý người dùng online
+const MAX_ONLINE_USERS = 5;
+let onlineUsers = new Map(); // socketId -> { username, socketId, loginTime }
+
 function initializeSeats() {
   seats = [];
   for (let row = 0; row < ROWS; row++) {
@@ -48,6 +52,9 @@ io.on('connection', (socket) => {
   // Gửi welcome message
   socket.emit('welcome', { message: 'Connected to Movie Ticketing Server' });
 
+  // Gửi danh sách người dùng online hiện tại
+  socket.emit('online:users', Array.from(onlineUsers.values()));
+
   // Xử lý yêu cầu lấy danh sách ghế
   socket.on('seats:get', () => {
     socket.emit('seats', {
@@ -57,9 +64,72 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Xử lý đăng nhập người dùng
+  socket.on('user:login', (data) => {
+    const { username } = data;
+    
+    // Kiểm tra giới hạn người dùng
+    if (onlineUsers.size >= MAX_ONLINE_USERS) {
+      socket.emit('user:limit:reached', { 
+        message: `Đã đạt giới hạn ${MAX_ONLINE_USERS} người online. Vui lòng thử lại sau.` 
+      });
+      return;
+    }
+
+    // Kiểm tra tên người dùng đã tồn tại
+    const existingUser = Array.from(onlineUsers.values()).find(user => user.username === username);
+    if (existingUser) {
+      socket.emit('login:error', { message: 'Tên người dùng đã được sử dụng' });
+      return;
+    }
+
+    // Thêm người dùng vào danh sách online
+    const user = {
+      username,
+      socketId: socket.id,
+      loginTime: new Date()
+    };
+    onlineUsers.set(socket.id, user);
+
+    // Gửi thông báo đăng nhập thành công
+    socket.emit('login:success', { message: `Chào mừng ${username}!` });
+
+    // Broadcast danh sách người dùng online cho tất cả client
+    io.emit('online:users', Array.from(onlineUsers.values()));
+
+    console.log(`User ${username} logged in. Online users: ${onlineUsers.size}`);
+  });
+
+  // Xử lý đăng xuất người dùng
+  socket.on('user:logout', () => {
+    const user = onlineUsers.get(socket.id);
+    if (user) {
+      // Thả tất cả ghế đang giữ của người dùng này
+      seats.forEach(seat => {
+        if (seat.holderSocketId === socket.id && seat.status === 'held') {
+          seat.status = 'available';
+          seat.holderName = null;
+          seat.holderSocketId = null;
+          io.emit('seat:update', seat);
+        }
+      });
+
+      onlineUsers.delete(socket.id);
+      io.emit('online:users', Array.from(onlineUsers.values()));
+      console.log(`User ${user.username} logged out. Online users: ${onlineUsers.size}`);
+    }
+  });
+
   // Xử lý giữ chỗ
   socket.on('seat:hold', (data) => {
     const { seatIds } = data;
+    const user = onlineUsers.get(socket.id);
+    
+    if (!user) {
+      socket.emit('seat:hold:error', { message: 'Vui lòng đăng nhập trước khi chọn ghế' });
+      return;
+    }
+
     let success = true;
     const updatedSeats = [];
 
@@ -67,6 +137,8 @@ io.on('connection', (socket) => {
       const seat = seats.find(s => s.id === id);
       if (seat && seat.status === 'available') {
         seat.status = 'held';
+        seat.holderName = user.username;
+        seat.holderSocketId = socket.id;
         updatedSeats.push(seat);
       } else {
         success = false;
@@ -159,7 +231,24 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+    const user = onlineUsers.get(socket.id);
+    if (user) {
+      // Thả tất cả ghế đang giữ của người dùng này khi disconnect
+      seats.forEach(seat => {
+        if (seat.holderSocketId === socket.id && seat.status === 'held') {
+          seat.status = 'available';
+          seat.holderName = null;
+          seat.holderSocketId = null;
+          io.emit('seat:update', seat);
+        }
+      });
+
+      onlineUsers.delete(socket.id);
+      io.emit('online:users', Array.from(onlineUsers.values()));
+      console.log(`User ${user.username} disconnected. Online users: ${onlineUsers.size}`);
+    } else {
+      console.log('Client disconnected:', socket.id);
+    }
   });
 });
 
