@@ -1,106 +1,169 @@
 const express = require('express');
-const cors = require('cors');
 const http = require('http');
-const { Server } = require('socket.io');
-const seatsManager = require('./seatsManager');
+const socketIo = require('socket.io');
+const cors = require('cors');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
-
-const PORT = process.env.PORT || 5000;
-const httpServer = http.createServer(app);
-
-const io = new Server(httpServer, {
+const server = http.createServer(app);
+const io = socketIo(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST"]
   }
 });
 
-// ===================== Khởi tạo ghế =====================
-seatsManager.initSeats();
+app.use(cors());
+app.use(express.json());
 
-function broadcastSeat(seat) {
-  io.emit('seat:update', seatsManager.getSeatPublicView(seat));
+// Mock data cho ghế
+const ROWS = 8;
+const COLS = 12;
+let seats = [];
+let seatIdCounter = 0;
+
+function initializeSeats() {
+  seats = [];
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      seats.push({
+        id: seatIdCounter++,
+        row,
+        col,
+        status: 'available' // available, held, reserved
+      });
+    }
+  }
 }
 
-function emitSnapshot(socket) {
-  const config = seatsManager.getSeatsConfig();
-  socket.emit('seats', {
-    rows: config.rows,
-    cols: config.cols,
-    seats: seatsManager.getAllSeatsPublicView()
-  });
-}
+initializeSeats();
 
-// ===================== Xử lý sự kiện Socket.IO =====================
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', message: 'Server is running' });
+});
+
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
-  socket.emit('welcome', { message: 'Welcome to Movie Ticketing realtime API' });
 
+  // Gửi welcome message
+  socket.emit('welcome', { message: 'Connected to Movie Ticketing Server' });
+
+  // Xử lý yêu cầu lấy danh sách ghế
   socket.on('seats:get', () => {
-    emitSnapshot(socket);
+    socket.emit('seats', {
+      rows: ROWS,
+      cols: COLS,
+      seats: seats
+    });
   });
 
-  socket.on('seats:hold', (payload) => {
-    try {
-      const ids = Array.isArray(payload?.seatIds) ? payload.seatIds : [];
-      for (const id of ids) {
-        const seat = seatsManager.getSeatById(id);
-        if (seatsManager.holdSeat(seat, socket.id)) {
-          broadcastSeat(seat);
-        }
+  // Xử lý giữ chỗ
+  socket.on('seat:hold', (data) => {
+    const { seatIds } = data;
+    let success = true;
+    const updatedSeats = [];
+
+    for (const id of seatIds) {
+      const seat = seats.find(s => s.id === id);
+      if (seat && seat.status === 'available') {
+        seat.status = 'held';
+        updatedSeats.push(seat);
+      } else {
+        success = false;
+        break;
       }
-    } catch (e) {
-      console.error('seats:hold error', e);
+    }
+
+    if (success) {
+      // Broadcast cập nhật cho tất cả client
+      updatedSeats.forEach(seat => {
+        io.emit('seat:update', seat);
+      });
+      socket.emit('seat:hold:success', { message: 'Giữ chỗ thành công' });
+    } else {
+      socket.emit('seat:hold:error', { message: 'Không thể giữ chỗ, ghế không khả dụng' });
     }
   });
 
-  socket.on('seats:release', (payload) => {
-    try {
-      const ids = Array.isArray(payload?.seatIds) ? payload.seatIds : [];
-      for (const id of ids) {
-        const seat = seatsManager.getSeatById(id);
-        if (seat && seatsManager.releaseSeat(seat)) {
-          broadcastSeat(seat);
-        }
+  // Xử lý xác nhận đặt chỗ
+  socket.on('seat:confirm', (data) => {
+    const { seatIds } = data;
+    let success = true;
+    const updatedSeats = [];
+
+    for (const id of seatIds) {
+      const seat = seats.find(s => s.id === id);
+      if (seat && (seat.status === 'available' || seat.status === 'held')) {
+        seat.status = 'reserved';
+        updatedSeats.push(seat);
+      } else {
+        success = false;
+        break;
       }
-    } catch (e) {
-      console.error('seats:release error', e);
+    }
+
+    if (success) {
+      updatedSeats.forEach(seat => {
+        io.emit('seat:update', seat);
+      });
+      socket.emit('seat:confirm:success', { message: 'Đặt chỗ thành công' });
+    } else {
+      socket.emit('seat:confirm:error', { message: 'Không thể đặt chỗ, ghế không khả dụng' });
     }
   });
 
-  socket.on('seats:reserve', (payload) => {
-    try {
-      const ids = Array.isArray(payload?.seatIds) ? payload.seatIds : [];
-      for (const id of ids) {
-        const seat = seatsManager.getSeatById(id);
-        if (seat && seatsManager.confirmSeat(seat, socket.id)) {
-          broadcastSeat(seat);
-        }
+  // Xử lý thả chỗ
+  socket.on('seat:release', (data) => {
+    const { seatIds } = data;
+    const updatedSeats = [];
+
+    for (const id of seatIds) {
+      const seat = seats.find(s => s.id === id);
+      if (seat && seat.status === 'held') {
+        seat.status = 'available';
+        updatedSeats.push(seat);
       }
-    } catch (e) {
-      console.error('seats:reserve error', e);
+    }
+
+    updatedSeats.forEach(seat => {
+      io.emit('seat:update', seat);
+    });
+    socket.emit('seat:release:success', { message: 'Thả chỗ thành công' });
+  });
+
+  // Xử lý đặt chỗ (legacy, có thể giữ để tương thích)
+  socket.on('seats:reserve', (data) => {
+    const { seatIds } = data;
+    let success = true;
+    const updatedSeats = [];
+
+    for (const id of seatIds) {
+      const seat = seats.find(s => s.id === id);
+      if (seat && seat.status === 'available') {
+        seat.status = 'reserved';
+        updatedSeats.push(seat);
+      } else {
+        success = false;
+        break;
+      }
+    }
+
+    if (success) {
+      updatedSeats.forEach(seat => {
+        io.emit('seat:update', seat);
+      });
+      socket.emit('seats:update', { seats: updatedSeats });
+    } else {
+      socket.emit('seats:update', { error: 'Không thể đặt chỗ' });
     }
   });
 
-  socket.on('disconnect', (reason) => {
-    console.log('Client disconnected:', socket.id, reason);
-    const releasedSeats = seatsManager.releaseAllBySocket(socket.id);
-    // Broadcast tất cả ghế đã được nhả
-    for (const seat of releasedSeats) {
-      broadcastSeat(seat);
-    }
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Server + Socket.IO listening on port ${PORT}`);
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
-
-

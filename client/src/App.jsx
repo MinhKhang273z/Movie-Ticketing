@@ -1,8 +1,6 @@
 import SeatGrid from './components/SeatGrid'; // <-- Đã import (TV3)
 import { useEffect, useMemo, useState } from 'react';
-import { io } from 'socket.io-client';
-
-const socket = io('http://localhost:5000', { autoConnect: true });
+import socketHandler from './socketHandler';
 
 // XÓA STATUS_COLOR (đã chuyển sang SeatGrid.jsx)
 
@@ -13,6 +11,7 @@ export default function App() {
   const [selectedSeatIds, setSelectedSeatIds] = useState(new Set());
   const [gridSize, setGridSize] = useState({ rows: 8, cols: 12 });
   const [submitting, setSubmitting] = useState(false);
+  const [notifications, setNotifications] = useState([]);
 
   // Tạo ma trận ghế để render lưới nhanh
   const seatMatrix = useMemo(() => {
@@ -28,6 +27,8 @@ export default function App() {
   }, [seats, gridSize]);
 
   useEffect(() => {
+    socketHandler.connect();
+
     const onConnect = () => setConnected(true);
     const onDisconnect = () => setConnected(false);
     const onWelcome = (payload) => setWelcome(payload?.message || '');
@@ -61,21 +62,31 @@ export default function App() {
       }
     };
 
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('welcome', onWelcome);
-    socket.on('seats', onSeats);
-    socket.on('seat:update', onSeatUpdate);
+    const onNotification = (notif) => {
+      setNotifications((prev) => [...prev, notif]);
+      // Tự động xóa thông báo sau 5 giây
+      setTimeout(() => {
+        setNotifications((prev) => prev.filter(n => n !== notif));
+      }, 5000);
+    };
+
+    socketHandler.on('connect', onConnect);
+    socketHandler.on('disconnect', onDisconnect);
+    socketHandler.on('welcome', onWelcome);
+    socketHandler.on('seats', onSeats);
+    socketHandler.on('seat:update', onSeatUpdate);
+    socketHandler.on('notification', onNotification);
 
     // Yêu cầu server gửi snapshot ghế ban đầu
-    socket.emit('seats:get');
+    socketHandler.getSeats();
 
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('welcome', onWelcome);
-      socket.off('seats', onSeats);
-      socket.off('seat:update', onSeatUpdate);
+      socketHandler.off('connect', onConnect);
+      socketHandler.off('disconnect', onDisconnect);
+      socketHandler.off('welcome', onWelcome);
+      socketHandler.off('seats', onSeats);
+      socketHandler.off('seat:update', onSeatUpdate);
+      socketHandler.off('notification', onNotification);
     };
   }, []);
 
@@ -94,7 +105,7 @@ export default function App() {
     setSubmitting(true);
     try {
       const ids = Array.from(selectedSeatIds);
-      socket.emit('seats:reserve', { seatIds: ids });
+      socketHandler.confirmSeats(ids);
     } finally {
       setSubmitting(false);
     }
@@ -191,6 +202,23 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {notifications.length > 0 && (
+        <div style={{ position: 'fixed', top: 20, right: 20, zIndex: 1000 }}>
+          {notifications.map((notif, idx) => (
+            <div key={idx} style={{
+              background: notif.type === 'success' ? '#22c55e' : '#ef4444',
+              color: 'white',
+              padding: '10px 16px',
+              borderRadius: 8,
+              marginBottom: 8,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+            }}>
+              {notif.message}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
