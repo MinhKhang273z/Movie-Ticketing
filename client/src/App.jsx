@@ -1,6 +1,6 @@
 import SeatGrid from './components/SeatGrid'; // <-- Đã import (TV3)
 import UserLogin from './components/UserLogin';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import socketHandler from './socketHandler';
 
 // XÓA STATUS_COLOR (đã chuyển sang SeatGrid.jsx)
@@ -88,10 +88,15 @@ export default function App() {
 
     // Xử lý đăng nhập thành công
     const onLoginSuccess = (data) => {
-      setNotifications((prev) => [...prev, { 
+      const notif = { 
         type: 'success', 
         message: data.message || 'Đăng nhập thành công' 
-      }]);
+      };
+      setNotifications((prev) => [...prev, notif]);
+      // Tự động xóa thông báo chào mừng sau 3 giây
+      setTimeout(() => {
+        setNotifications((prev) => prev.filter(n => n !== notif));
+      }, 3000);
     };
 
     // Xử lý đăng nhập thất bại
@@ -130,15 +135,28 @@ export default function App() {
     };
   }, []);
 
-  const toggleSeat = (seat) => {
+  const toggleSeat = useCallback((seat) => {
     if (!seat) return;
-    if (seat.status !== 'available') return; // chỉ chọn ghế đang trống
-    setSelectedSeatIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(seat.id)) next.delete(seat.id); else next.add(seat.id);
-      return next;
-    });
-  };
+    
+    // Cho phép toggle ghế có status 'available' hoặc ghế đang được chọn (đang ở trạng thái 'held' của người dùng hiện tại)
+    if (seat.status === 'available') {
+      setSelectedSeatIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(seat.id)) next.delete(seat.id); else next.add(seat.id);
+        return next;
+      });
+    } else if (seat.status === 'held' && seat.holderSocketId === currentUser?.socketId) {
+      // Nếu ghế đang được giữ bởi người dùng hiện tại, cho phép bỏ chọn
+      setSelectedSeatIds((prev) => {
+        if (prev.has(seat.id)) {
+          const next = new Set(prev);
+          next.delete(seat.id);
+          return next;
+        }
+        return prev;
+      });
+    }
+  }, [currentUser]);
 
   // Giữ ghế khi người dùng chọn
   const holdSeats = async () => {
@@ -151,6 +169,25 @@ export default function App() {
       setSubmitting(false);
     }
   };
+
+  // Thả ghế đang được giữ bởi người dùng
+  const releaseSeats = useCallback(async () => {
+    setSubmitting(true);
+    try {
+      // Lọc các ghế đang được giữ bởi người dùng hiện tại
+      const myHeldSeats = seats.filter(
+        seat => seat.status === 'held' && seat.holderSocketId === currentUser?.socketId
+      );
+      if (myHeldSeats.length > 0) {
+        const ids = myHeldSeats.map(seat => seat.id);
+        socketHandler.releaseSeats(ids);
+        // Bỏ chọn các ghế đã thả
+        setSelectedSeatIds(new Set());
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }, [seats, currentUser]);
 
   const confirmSelection = async () => {
     if (selectedSeatIds.size === 0) return;
@@ -274,15 +311,51 @@ export default function App() {
                 disabled={selectedCount === 0 || submitting}
                 style={{
                   padding: '10px 16px',
-                  background: 'transparent',
-                  color: 'rgba(255,255,255,0.9)',
+                  background: selectedCount === 0 || submitting ? 'rgba(255,255,255,0.05)' : 'transparent',
+                  color: selectedCount === 0 || submitting ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.9)',
                   border: '1px solid rgba(255,255,255,0.2)',
                   borderRadius: 10,
                   cursor: selectedCount === 0 || submitting ? 'not-allowed' : 'pointer',
-                  backdropFilter: 'blur(6px)'
+                  backdropFilter: 'blur(6px)',
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => { 
+                  if (!(selectedCount === 0 || submitting)) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.4)';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }
+                }}
+                onMouseLeave={(e) => { 
+                  e.currentTarget.style.background = selectedCount === 0 || submitting ? 'rgba(255,255,255,0.05)' : 'transparent';
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)';
+                  e.currentTarget.style.transform = 'none';
                 }}
               >
-                Bỏ chọn
+                Bỏ chọn ({selectedCount})
+              </button>
+              <button
+                onClick={releaseSeats}
+                disabled={!seats.some(seat => seat.status === 'held' && seat.holderSocketId === currentUser?.socketId) || submitting}
+                style={{
+                  padding: '10px 18px',
+                  background: 'linear-gradient(90deg,#f59e0b,#ef4444)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 10,
+                  cursor: !seats.some(seat => seat.status === 'held' && seat.holderSocketId === currentUser?.socketId) || submitting ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 10px 24px rgba(239, 68, 68, 0.35)',
+                  transition: 'transform .12s ease, box-shadow .12s ease',
+                  opacity: !seats.some(seat => seat.status === 'held' && seat.holderSocketId === currentUser?.socketId) ? 0.5 : 1
+                }}
+                onMouseEnter={(e) => { 
+                  if (seats.some(seat => seat.status === 'held' && seat.holderSocketId === currentUser?.socketId) && !submitting) {
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }
+                }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}
+              >
+                Thả chỗ
               </button>
               <button
                 onClick={holdSeats}
